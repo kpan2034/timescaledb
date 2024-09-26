@@ -261,6 +261,13 @@ modify_compressed_toast_table_storage(CompressionSettings *settings, List *colde
 				Assert(stor == TOAST_STORAGE_EXTENDED);
 				cmd->def = (Node *) makeString("extended");
 				cmds = lappend(cmds, cmd);
+#ifdef USE_LZ4
+				cmd = makeNode(AlterTableCmd);
+				cmd->subtype = AT_SetCompression;
+				cmd->name = pstrdup(cd->colname);
+				cmd->def = (Node *) makeString("lz4");
+				cmds = lappend(cmds, cmd);
+#endif
 			}
 		}
 	}
