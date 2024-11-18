@@ -1,0 +1,136 @@
+# Test ABI versions against snapshot
+#
+#
+
+name: ABI Test Against Snapshot
+"on":
+  schedule:
+    # run daily 20:00 on main branch
+    - cron: '0 20 * * *'
+  push:
+    branches:
+      - prerelease_test
+      - trigger/snapshot-abi
+  pull_request:
+    paths: .github/workflows/snapshot-abi.yaml
+jobs:
+  config:
+    runs-on: ubuntu-latest
+    outputs:
+      pg17_abi_min: ${{ steps.config.outputs.pg17_abi_min }}
+
+    steps:
+    - name: Checkout source code
+      uses: actions/checkout@v4
+    - name: Read configuration
+      id: config
+      run: python .github/gh_config_reader.py
+
+  abi_snapshot_test:
+    name: ABI Snapshot Test ${{ matrix.dir }} PG${{ matrix.pg }}
+    runs-on: ubuntu-latest
+    needs: config
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: [ 17 ]
+        include:
+          - pg: 17
+            builder: ${{ fromJson(needs.config.outputs.pg17_abi_min) }}-alpine
+            tester: ${{ fromJson(needs.config.outputs.pg17_abi_min) }}-alpine3.19
+
+    steps:
+
+    - name: Install Linux Dependencies
+      if: runner.os == 'Linux'
+      run: |
+        # Don't add ddebs here because the ddebs mirror is always 503 Service Unavailable.
+        # If needed, install them before opening the core dump.
+        sudo apt-get update
+        sudo apt-get install flex bison lcov systemd-coredump gdb libipc-run-perl \
+          libtest-most-perl pkgconf icu-devtools ${{ matrix.extra_packages }}
+
+    - name: Checkout TimescaleDB
+      uses: actions/checkout@v4
+
+    - name: Build extension
+      run: |
+        BUILDER_IMAGE="postgres:${{matrix.builder}}"
+
+        docker pull ${BUILDER_IMAGE}
+        docker buildx imagetools inspect ${BUILDER_IMAGE}
+        docker run -i --rm -v $(pwd):/mnt -e EXTRA_PKGS="${EXTRA_PKGS}" ${BUILDER_IMAGE} bash <<"EOF"
+
+          # We run the same extension on different docker images, old versions
+          # have OpenSSL 1.1 and the new versions have OpenSSL 3, so we try to
+          # pin the 1.1. Note that depending on PG version, both images might
+          # have 1.1 or 3, so we first try to install the versioned 1.1 package,
+          # and if it's not present, it means the unversioned package is 1.1, so
+          # we install it.
+          apk add openssl1.1-compat-dev || apk add openssl-dev
+          git config --global --add safe.directory /mnt
+          cd /mnt
+          BUILD_DIR=build_abi BUILD_FORCE_REMOVE=true ./bootstrap
+          make -C build_abi install
+          mkdir -p build_abi/install_ext build_abi/install_lib
+          cp `pg_config --sharedir`/extension/timescaledb*.{control,sql} build_abi/install_ext
+          cp `pg_config --pkglibdir`/timescaledb*.so build_abi/install_lib
+        EOF
+
+    - name: Build PostgreSQL ${{ matrix.pg }}-snapshot
+      run: |
+        wget -q -O postgresql.tar.bz2 \
+          https://ftp.postgresql.org/pub/snapshot/${{ matrix.pg }}/postgresql-${{ matrix.pg }}-snapshot.tar.bz2
+        mkdir -p ~/$PG_SRC_DIR
+        tar --extract --file postgresql.tar.bz2 --directory ~/$PG_SRC_DIR --strip-components 1
+        cd ~/$PG_SRC_DIR
+        ./configure --prefix=$HOME/$PG_INSTALL_DIR --with-openssl \
+          --without-readline --without-zlib --without-libxml ${{ matrix.pg_extra_args }}
+        make -j $(nproc)
+        for ext in ${{ matrix.pg_extensions }}; do
+          make -j $(nproc) -C contrib/${ext}
+        done
+
+    - name: Install PostgreSQL ${{ matrix.pg }}
+      run: |
+        cd ~/$PG_SRC_DIR
+        make install
+        for ext in ${{ matrix.pg_extensions }}; do
+          make -C contrib/${ext} install
+        done
+        echo "$HOME/$PG_INSTALL_DIR/bin" >> "${GITHUB_PATH}"
+
+    - name: Check exported symbols
+      run: ./build/scripts/export_prefix_check.sh
+
+    - name: make regresscheck
+      id: regresscheck
+      run: |
+          set -o pipefail
+          sudo -u postgres make -C build_abi -k regresscheck regresscheck-t \
+            regresscheck-shared IGNORES="${{matrix.ignores}}" | tee installcheck.log
+
+    - name: Show regression diffs
+      if: always()
+      id: collectlogs
+      run: |
+        sudo chmod a+rw .
+        sudo find build_abi -name regression.diffs -exec cat {} + > regression.log
+        sudo find build_abi -name postmaster.log -exec cat {} + > postmaster.log
+        if [[ -s regression.log ]]; then echo "regression_diff=true" >>$GITHUB_OUTPUT; fi
+        grep -e 'FAILED' -e 'failed (ignored)' -e 'not ok' installcheck.log || true
+        cat regression.log
+
+    - name: Save regression diffs
+      if: always() && steps.collectlogs.outputs.regression_diff == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: Regression diff ABI Breakage ${{ matrix.dir }} PG${{ matrix.pg }}
+        path: regression.log
+
+    - name: Save postmaster.log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: PostgreSQL log ABI Breakage ${{ matrix.dir }} PG${{ matrix.pg }}
+        path: postmaster.log
