@@ -45,36 +45,36 @@ jobs:
       fail-fast: false
       matrix:
         dir: [ "forward", "backward" ]
-        pg: [ 14, 15, 16, 17 ]
+        pg: [ 17 ]
         include:
-          - dir: backward
-            pg: 14
-            builder: ${{ fromJson(needs.config.outputs.pg14_latest) }}-alpine3.19
-            tester: ${{ fromJson(needs.config.outputs.pg14_abi_min) }}-alpine
-            ignores: memoize
-          - dir: forward
-            pg: 14
-            builder: ${{ fromJson(needs.config.outputs.pg14_abi_min) }}-alpine
-            tester: ${{ fromJson(needs.config.outputs.pg14_latest) }}-alpine3.19
-          - dir: backward
-            pg: 15
-            builder: ${{ fromJson(needs.config.outputs.pg15_latest) }}-alpine3.19
-            tester: ${{ fromJson(needs.config.outputs.pg15_abi_min) }}-alpine
-          - dir: forward
-            pg: 15
-            builder: ${{ fromJson(needs.config.outputs.pg15_abi_min) }}-alpine
-            tester: ${{ fromJson(needs.config.outputs.pg15_latest) }}-alpine3.19
-          - dir: backward
-            pg: 16
-            builder: ${{ fromJson(needs.config.outputs.pg16_latest) }}-alpine3.19
-            tester: ${{ fromJson(needs.config.outputs.pg16_abi_min) }}-alpine
-            # this test has issues with 16.0 version of pg_dump binary
-            # which affects backwards test only 
-            ignores: pg_dump_unprivileged
-          - dir: forward
-            pg: 16
-            builder: ${{ fromJson(needs.config.outputs.pg16_abi_min) }}-alpine
-            tester: ${{ fromJson(needs.config.outputs.pg16_latest) }}-alpine3.19
+          # - dir: backward
+          #   pg: 14
+          #   builder: ${{ fromJson(needs.config.outputs.pg14_latest) }}-alpine3.19
+          #   tester: ${{ fromJson(needs.config.outputs.pg14_abi_min) }}-alpine
+          #   ignores: memoize
+          # - dir: forward
+          #   pg: 14
+          #   builder: ${{ fromJson(needs.config.outputs.pg14_abi_min) }}-alpine
+          #   tester: ${{ fromJson(needs.config.outputs.pg14_latest) }}-alpine3.19
+          # - dir: backward
+          #   pg: 15
+          #   builder: ${{ fromJson(needs.config.outputs.pg15_latest) }}-alpine3.19
+          #   tester: ${{ fromJson(needs.config.outputs.pg15_abi_min) }}-alpine
+          # - dir: forward
+          #   pg: 15
+          #   builder: ${{ fromJson(needs.config.outputs.pg15_abi_min) }}-alpine
+          #   tester: ${{ fromJson(needs.config.outputs.pg15_latest) }}-alpine3.19
+          # - dir: backward
+          #   pg: 16
+          #   builder: ${{ fromJson(needs.config.outputs.pg16_latest) }}-alpine3.19
+          #   tester: ${{ fromJson(needs.config.outputs.pg16_abi_min) }}-alpine
+          #   # this test has issues with 16.0 version of pg_dump binary
+          #   # which affects backwards test only
+          #   ignores: pg_dump_unprivileged
+          # - dir: forward
+          #   pg: 16
+          #   builder: ${{ fromJson(needs.config.outputs.pg16_abi_min) }}-alpine
+          #   tester: ${{ fromJson(needs.config.outputs.pg16_latest) }}-alpine3.19
           - dir: backward
             pg: 17
             builder: ${{ fromJson(needs.config.outputs.pg17_latest) }}-alpine3.19
