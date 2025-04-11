@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-20.04
     strategy:
       matrix:
-        pg: [15, 16, 17]
+        pg: [15]
       fail-fast: false
 
     steps:
@@ -34,9 +34,15 @@ jobs:
         make -C build
         sudo make -C build install
 
+    - name: Debug
+      run: |
+        ls -la /etc/postgresql/
+        ls -la /etc/postgresql/15/
+        ls -la /etc/postgresql/15/main
+
     - name: Setup database
       run: |
-        sudo tee -a /etc/postgresql/${{ matrix.pg }}/main/postgresql.conf <<-CONF
+        sudo tee -a /etc/postgresql/15/main/postgresql.conf <<-CONF
           shared_preload_libraries = 'timescaledb'
           max_worker_processes = 0
           log_destination = syslog
