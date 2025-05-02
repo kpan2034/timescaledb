@@ -1,2 +1,4 @@
 #suppress getaddrinfo due to internal error on macos
 interceptor_via_fun:getaddrinfo
+#suppress fetch_att
+interceptor_via_fun:fetch_att
