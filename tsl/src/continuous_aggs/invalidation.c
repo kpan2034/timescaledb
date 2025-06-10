@@ -5,6 +5,7 @@
  */
 #include <postgres.h>
 
+#include "continuous_aggs/invalidation_multi.h"
 #include <access/htup.h>
 #include <access/htup_details.h>
 #include <access/xact.h>

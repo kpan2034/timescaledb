@@ -65,7 +65,6 @@ multi_invalidation_state_init(MultiInvalidationState *state, const char *slot_na
 	state->work_context = AllocSetContextCreate(CurrentMemoryContext,
 												"InvalidationProcessingContext",
 												ALLOCSET_START_SMALL_SIZES);
-
 	HASHCTL hypertables_ctl = { .keysize = sizeof(int32),
 								.entrysize = sizeof(MultiInvalidationEntry),
 								.hcxt = state->hash_context };
