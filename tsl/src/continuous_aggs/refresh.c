@@ -7,6 +7,7 @@
 
 #include "bgw/job.h"
 #include "bgw_policy/policies_v2.h"
+#include "debug_point.h"
 #include <access/xact.h>
 #include <executor/spi.h>
 #include <fmgr.h>

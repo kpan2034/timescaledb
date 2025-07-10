@@ -1060,6 +1060,7 @@ hypertable_invalidation_state_cleanup(const HypertableInvalidationState *state)
 void
 invalidation_process_hypertable_log(int32 hypertable_id, Oid dimtype)
 {
+	DEBUG_WAITPOINT("invalidation_process_hypertable_log");
 	HypertableInvalidationState state;
 	const CaggsInfo all_caggs = ts_continuous_agg_get_all_caggs_info(hypertable_id);
 

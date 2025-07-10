@@ -1,0 +1,77 @@
+Parsed test spec with 4 sessions
+
+starting permutation: debug_waitpoint_enable R1_refresh R2_refresh debug_waitpoint_release count_bucket R2_refresh count_bucket
+step debug_waitpoint_enable: 
+    SELECT debug_waitpoint_enable('invalidation_process_hypertable_log');
+
+debug_waitpoint_enable
+----------------------
+                      
+(1 row)
+
+R1: LOG:  statement: 
+    CALL refresh_continuous_aggregate('sensor_hourly_avg', '2 months'::interval, '1 week'::interval);
+
+step R1_refresh: 
+    CALL refresh_continuous_aggregate('sensor_hourly_avg', '2 months'::interval, '1 week'::interval);
+ <waiting ...>
+R2: LOG:  statement: 
+
+    CALL refresh_continuous_aggregate('sensor_hourly_avg', '1 week'::interval, '1 hour'::interval);
+
+step R2_refresh: 
+
+    CALL refresh_continuous_aggregate('sensor_hourly_avg', '1 week'::interval, '1 hour'::interval);
+ <waiting ...>
+step debug_waitpoint_release: 
+    SELECT debug_waitpoint_release('invalidation_process_hypertable_log');
+
+debug_waitpoint_release
+-----------------------
+                       
+(1 row)
+
+R1: DEBUG:  continuous aggregate refresh (individual invalidation) on "sensor_hourly_avg" in window [ Sat May 10 16:00:00 2025 PDT, Thu Jul 03 15:00:00 2025 PDT ]
+R1: LOG:  deleted 0 row(s) from materialization table "_timescaledb_internal._materialized_hypertable_X"
+R1: DEBUG:  building index "_hyper_X_X_chunk__materialized_hypertable_X_bucket_idx" on table "_hyper_X_X_chunk" serially
+R1: DEBUG:  index "_hyper_X_X_chunk__materialized_hypertable_X_bucket_idx" can safely use deduplication
+R1: DEBUG:  building index "_hyper_X_X_chunk__materialized_hypertable_X_sensor_id_bucket_i" on table "_hyper_X_X_chunk" serially
+R1: DEBUG:  index "_hyper_X_X_chunk__materialized_hypertable_X_sensor_id_bucket_i" can safely use deduplication
+R1: LOG:  inserted 1 row(s) into materialization table "_timescaledb_internal._materialized_hypertable_X"
+step R1_refresh: <... completed>
+R2: DEBUG:  cannot lock "sensor_hourly_avg" materialization invalidation log [ -infinity, -infinity ], skipping
+R2: DEBUG:  cannot lock "sensor_hourly_avg" materialization invalidation log [ Fri Jan 31 01:00:00 2025 PST, infinity ], skipping
+R2: NOTICE:  continuous aggregate "sensor_hourly_avg" is already up-to-date
+step R2_refresh: <... completed>
+step count_bucket: 
+    SELECT count(bucket) FROM sensor_hourly_avg;
+
+count
+-----
+ 3602
+(1 row)
+
+R2: LOG:  statement: 
+
+    CALL refresh_continuous_aggregate('sensor_hourly_avg', '1 week'::interval, '1 hour'::interval);
+
+R2: DEBUG:  hypertable 1 existing watermark >= new invalidation threshold 1752181200000000 1752181200000000
+R2: DEBUG:  continuous aggregate refresh (individual invalidation) on "sensor_hourly_avg" in window [ Thu Jul 03 16:00:00 2025 PDT, Thu Jul 10 14:00:00 2025 PDT ]
+R2: LOG:  deleted 0 row(s) from materialization table "_timescaledb_internal._materialized_hypertable_X"
+R2: DEBUG:  building index "_hyper_X_X_chunk__materialized_hypertable_X_bucket_idx" on table "_hyper_X_X_chunk" serially
+R2: DEBUG:  index "_hyper_X_X_chunk__materialized_hypertable_X_bucket_idx" can safely use deduplication
+R2: DEBUG:  building index "_hyper_X_X_chunk__materialized_hypertable_X_sensor_id_bucket_i" on table "_hyper_X_X_chunk" serially
+R2: DEBUG:  index "_hyper_X_X_chunk__materialized_hypertable_X_sensor_id_bucket_i" can safely use deduplication
+R2: LOG:  inserted 1 row(s) into materialization table "_timescaledb_internal._materialized_hypertable_X"
+step R2_refresh: 
+
+    CALL refresh_continuous_aggregate('sensor_hourly_avg', '1 week'::interval, '1 hour'::interval);
+
+step count_bucket: 
+    SELECT count(bucket) FROM sensor_hourly_avg;
+
+count
+-----
+ 3603
+(1 row)
+
