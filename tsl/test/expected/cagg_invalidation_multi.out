@@ -230,4 +230,3 @@ GROUP BY 1 ORDER BY 1,2;
  cond_10        | [0,110)
  cond_20        | [0,120)
 (2 rows)
-

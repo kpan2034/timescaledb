@@ -207,8 +207,11 @@ set(SOLO_TESTS
     cagg_bgw
     cagg_ddl-${PG_VERSION_MAJOR}
     cagg_dump
-<<<<<<< HEAD
-=======
+    cagg_policy_incremental
+    move
+    reorder
+    split_chunk
+    telemetry_stats
     # These are solo tests because of a bug in PostgreSQL 17.5. A fix for it
     # seems to be scheduled for release with 17.6.
     #
@@ -216,7 +219,6 @@ set(SOLO_TESTS
     # https://github.com/postgres/postgres/commit/d87d07b7ad3b782cb74566cd771ecdb2823adf6a
     cagg_invalidation
     cagg_plugin
->>>>>>> 028d8f072 (Add multi-invalidation processing module)
     cagg_policy_incremental
     move
     reorder
