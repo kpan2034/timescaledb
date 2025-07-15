@@ -104,4 +104,5 @@ extern MultiInvalidationEntry *
 multi_invalidation_state_hypertable_entry_get_for_update(MultiInvalidationState *state,
 														 int32 hypertable_id);
 extern void multi_invalidation_process_hypertable_log(List *hypertables);
-extern Datum continuous_agg_process_multi_hypertable_invalidations(PG_FUNCTION_ARGS);
+extern Datum
+continuous_agg_process_multi_hypertable_invalidations(PG_FUNCTION_ARGS);
