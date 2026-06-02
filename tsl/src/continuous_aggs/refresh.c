@@ -36,6 +36,7 @@
 #include "ts_catalog/catalog.h"
 #include "ts_catalog/continuous_agg.h"
 #include "ts_catalog/continuous_aggs_jobs_refresh_ranges.h"
+#include "ts_catalog/continuous_aggs_refresh_queue.h"
 
 #define CAGG_REFRESH_LOG_LEVEL                                                                     \
 	(context.callctx == CAGG_REFRESH_POLICY || context.callctx == CAGG_REFRESH_POLICY_BATCHED ?    \
@@ -668,14 +669,27 @@ continuous_agg_refresh(PG_FUNCTION_ARGS)
 	}
 
 	ContinuousAggRefreshContext context = { .callctx = CAGG_REFRESH_WINDOW };
-	continuous_agg_refresh_internal(cagg,
-									&refresh_window,
-									context,
-									PG_ARGISNULL(1),
-									PG_ARGISNULL(2),
-									true,
-									force,
-									false /*extend_last_bucket*/);
+
+	if (cagg->data.external_refresh)
+	{
+		continuous_agg_queue_refresh_ranges(cagg,
+											&refresh_window,
+											context,
+											PG_ARGISNULL(1),
+											PG_ARGISNULL(2),
+											true);
+	}
+	else
+	{
+		continuous_agg_refresh_internal(cagg,
+										&refresh_window,
+										context,
+										PG_ARGISNULL(1),
+										PG_ARGISNULL(2),
+										true,
+										force,
+										false /*extend_last_bucket*/);
+	}
 
 	PG_RETURN_VOID();
 }
@@ -1057,6 +1071,293 @@ continuous_agg_refresh_internal(const ContinuousAgg *cagg_arg,
 	if (!refreshed)
 	{
 		emit_up_to_date_notice(cagg, context);
+	}
+
+	cleanup_before_cagg_refresh_exit(cagg, &cagg_spi_ctx);
+
+	SPI_commit();
+	int rc = SPI_finish();
+	if (rc != SPI_OK_FINISH)
+	{
+		elog(ERROR, "SPI_finish failed: %s", SPI_result_code_string(rc));
+	}
+}
+
+/*
+ * Execute materialization for a given range. Called by external refresh extension.
+ * This assumes invalidation processing has already been done and the ranges
+ * are already bucket-aligned.
+ *
+ * Exported so the timescaledb_ext_refresh extension can call it.
+ */
+PGDLLEXPORT void
+ts_continuous_agg_materialize_range(int32 mat_id, int64 start_range, int64 end_range)
+{
+	const ContinuousAgg *cagg = ts_continuous_agg_find_by_mat_hypertable_id(mat_id, false);
+	if (cagg == NULL)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("continuous aggregate with materialization id %d not found", mat_id)));
+	}
+
+	/* Like regular materialized views, require owner to refresh. */
+	if (!object_ownercheck(RelationRelationId, cagg->relid, GetUserId()))
+	{
+		aclcheck_error(ACLCHECK_NOT_OWNER,
+					   get_relkind_objtype(get_rel_relkind(cagg->relid)),
+					   get_rel_name(cagg->relid));
+	}
+
+	PreventCommandIfReadOnly("execute_external_refresh()");
+
+	/*
+	 * Disable the decompression limit for the duration of the refresh, and
+	 * set up SPI so the materialization can use SPI_prepare / SPI_execute.
+	 */
+	const char *old_decompression_limit =
+		GetConfigOption("timescaledb.max_tuples_decompressed_per_dml_transaction", false, false);
+	SetConfigOption("timescaledb.max_tuples_decompressed_per_dml_transaction",
+					"0",
+					PGC_USERSET,
+					PGC_S_SESSION);
+
+	int rc = SPI_connect();
+	if (rc != SPI_OK_CONNECT)
+	{
+		elog(ERROR, "SPI_connect failed: %s", SPI_result_code_string(rc));
+	}
+
+	/* Lock down search_path */
+	int save_nestlevel = NewGUCNestLevel();
+	RestrictSearchPath();
+
+	InternalTimeRange refresh_window = {
+		.type = cagg->partition_type,
+		.start = start_range,
+		.end = end_range,
+	};
+
+	/* Register the range to prevent overlapping concurrent refreshes. */
+	if (!ts_cagg_jobs_refresh_ranges_lock_and_register(mat_id,
+													   start_range,
+													   end_range,
+													   MyProcPid,
+													   0 /* no job_id for external refresh */))
+	{
+		SPI_finish();
+		AtEOXact_GUC(false, save_nestlevel);
+		SetConfigOption("timescaledb.max_tuples_decompressed_per_dml_transaction",
+						old_decompression_limit,
+						PGC_USERSET,
+						PGC_S_SESSION);
+		ereport(ERROR,
+				(errcode(ERRCODE_LOCK_NOT_AVAILABLE),
+				 errmsg("could not refresh continuous aggregate \"%s\" due to a concurrent refresh",
+						NameStr(cagg->data.user_view_name)),
+				 errdetail("A concurrent refresh on window [%s, %s) is already in progress.",
+						   ts_internal_to_time_string(start_range, refresh_window.type),
+						   ts_internal_to_time_string(end_range, refresh_window.type))));
+	}
+
+	/* Initialize and execute the materialization */
+	ContinuousAggRefreshState refresh;
+	continuous_agg_refresh_init(&refresh,
+								cagg,
+								&refresh_window,
+								false /* no bucketing needed, ranges are already bucketed */);
+
+	continuous_agg_refresh_execute(&refresh, &refresh_window);
+
+	/* Clean up the registration */
+	ts_cagg_jobs_refresh_ranges_delete_by_pid(mat_id, MyProcPid);
+
+	/* Restore search_path and decompression limit */
+	AtEOXact_GUC(false, save_nestlevel);
+	SetConfigOption("timescaledb.max_tuples_decompressed_per_dml_transaction",
+					old_decompression_limit,
+					PGC_USERSET,
+					PGC_S_SESSION);
+
+	SPI_finish();
+}
+
+/*
+ * Queue refresh ranges for external refresh.
+ *
+ * This is a simplified version of continuous_agg_refresh_internal() that
+ * processes invalidations but instead of materializing, writes the
+ * invalidation ranges to the continuous_aggs_refresh_queue catalog table
+ * for external consumers to process.
+ */
+void
+continuous_agg_queue_refresh_ranges(const ContinuousAgg *cagg_arg,
+									const InternalTimeRange *refresh_window_arg,
+									const ContinuousAggRefreshContext context,
+									const bool start_isnull, const bool end_isnull,
+									bool bucketing_refresh_window)
+{
+	const ContinuousAgg *volatile cagg = cagg_arg;
+	int32 mat_id = cagg->data.mat_hypertable_id;
+	InternalTimeRange refresh_window = *refresh_window_arg;
+	int64 invalidation_threshold;
+	CaggRefreshSpiContext cagg_spi_ctx = {};
+
+	/* Like regular materialized views, require owner to refresh. */
+	if (!object_ownercheck(RelationRelationId, cagg->relid, GetUserId()))
+	{
+		aclcheck_error(ACLCHECK_NOT_OWNER,
+					   get_relkind_objtype(get_rel_relkind(cagg->relid)),
+					   get_rel_name(cagg->relid));
+	}
+
+	continuous_agg_refresh_spi_setup_and_connect(&cagg_spi_ctx);
+
+	/* No bucketing when open ended */
+	if (bucketing_refresh_window && !(start_isnull && end_isnull))
+	{
+		refresh_window =
+			compute_inscribed_bucketed_refresh_window(refresh_window_arg, cagg->bucket_function);
+	}
+
+	if (refresh_window.start >= refresh_window.end)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("refresh window too small"),
+				 errdetail("The refresh window must cover at least one bucket of data."),
+				 errhint("Align the refresh window with the bucket"
+						 " time zone or use at least two buckets.")));
+	}
+
+	/* Register this refresh window to prevent overlapping concurrent refreshes. */
+	if (!ts_cagg_jobs_refresh_ranges_lock_and_register(mat_id,
+													   refresh_window.start,
+													   refresh_window.end,
+													   MyProcPid,
+													   context.job_id))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_LOCK_NOT_AVAILABLE),
+				 errmsg("could not refresh continuous aggregate \"%s\" due to a concurrent refresh",
+						NameStr(cagg->data.user_view_name)),
+				 errdetail("A concurrent refresh on window [%s, %s) is already in progress.",
+						   ts_internal_to_time_string(refresh_window.start, refresh_window.type),
+						   ts_internal_to_time_string(refresh_window.end, refresh_window.type))));
+	}
+
+	volatile ErrorData *edata = NULL;
+	PG_TRY();
+	{
+		SPI_commit_and_chain();
+
+		/* Set the new invalidation threshold. */
+		invalidation_threshold = invalidation_threshold_set_or_get(cagg, &refresh_window);
+
+		int64 computed_invalidation_threshold_for_cagg = invalidation_threshold;
+		if (invalidation_threshold > ts_time_get_min(refresh_window.type) &&
+			invalidation_threshold < ts_time_get_max(refresh_window.type))
+		{
+			computed_invalidation_threshold_for_cagg =
+				cagg_current_bucket_start(invalidation_threshold,
+										  refresh_window.type,
+										  cagg->bucket_function);
+		}
+
+		if (refresh_window.end > computed_invalidation_threshold_for_cagg)
+		{
+			refresh_window.end = computed_invalidation_threshold_for_cagg;
+		}
+
+		if (refresh_window.start < refresh_window.end &&
+			!(IS_TIMESTAMP_TYPE(refresh_window.type) &&
+			  invalidation_threshold == ts_time_get_min(refresh_window.type)))
+		{
+			/* Process hypertable invalidation log (transaction 1) */
+			invalidation_process_hypertable_log(cagg->data.raw_hypertable_id, refresh_window.type);
+			SPI_commit_and_chain();
+
+			cagg = ts_continuous_agg_find_by_mat_hypertable_id(mat_id, false);
+
+			/* Process CAgg invalidation log (transaction 2) */
+			Oid hyper_relid = ts_hypertable_id_to_relid(cagg->data.mat_hypertable_id, false);
+			LockRelationOid(hyper_relid, ShareUpdateExclusiveLock);
+			invalidation_process_cagg_log(cagg, &refresh_window);
+			SPI_commit_and_chain();
+
+			/* Collect invalidation ranges (transaction 3) */
+			InvalidationStore *invalidations =
+				collect_and_delete_cagg_invalidations_in_window(cagg, &refresh_window, false);
+
+			if (invalidations != NULL)
+			{
+				TupleTableSlot *slot;
+				slot = MakeSingleTupleTableSlot(invalidations->tupdesc, &TTSOpsMinimalTuple);
+
+				while (tuplestore_gettupleslot(invalidations->tupstore,
+											   true /* forward */,
+											   false /* copy */,
+											   slot))
+				{
+					bool isnull;
+					Datum start = slot_getattr(
+						slot,
+						Anum_continuous_aggs_materialization_invalidation_log_lowest_modified_value,
+						&isnull);
+					Datum end = slot_getattr(
+						slot,
+						Anum_continuous_aggs_materialization_invalidation_log_greatest_modified_value,
+						&isnull);
+
+					InternalTimeRange invalidation = {
+						.type = refresh_window.type,
+						.start = DatumGetInt64(start),
+						/* Invalidations are inclusive at the end, while refresh windows
+						 * aren't, so add one to the end of the invalidated region */
+						.end = ts_time_saturating_add(DatumGetInt64(end), 1, refresh_window.type),
+					};
+
+					InternalTimeRange bucketed_refresh_window = {
+						.type = invalidation.type,
+						.start = invalidation.start,
+						.end = invalidation.end,
+					};
+
+					if (bucketing_refresh_window)
+					{
+						bucketed_refresh_window =
+							compute_circumscribed_bucketed_refresh_window(&invalidation,
+																		  cagg->bucket_function);
+					}
+
+					log_refresh_window(CAGG_REFRESH_LOG_LEVEL,
+									   cagg,
+									   &bucketed_refresh_window,
+									   context);
+
+					ts_cagg_refresh_queue_insert(mat_id,
+												 bucketed_refresh_window.start,
+												 bucketed_refresh_window.end,
+												 context.job_id);
+				}
+
+				ExecDropSingleTupleTableSlot(slot);
+				invalidation_store_free(invalidations);
+			}
+		}
+	}
+	PG_CATCH();
+	{
+		MemoryContextSwitchTo(TopMemoryContext);
+		edata = CopyErrorData();
+		FlushErrorState();
+	}
+	PG_END_TRY();
+
+	if (edata)
+	{
+		rollback_and_error(cagg, &cagg_spi_ctx, (ErrorData *) edata);
+		return;
 	}
 
 	cleanup_before_cagg_refresh_exit(cagg, &cagg_spi_ctx);

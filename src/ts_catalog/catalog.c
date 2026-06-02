@@ -117,6 +117,10 @@ static const TableInfoDef catalog_table_names[_MAX_CATALOG_TABLES + 1] = {
 		.schema_name = CATALOG_SCHEMA_NAME,
 		.table_name = CHUNK_COLUMN_STATS_TABLE_NAME,
 	},
+	[CONTINUOUS_AGGS_REFRESH_QUEUE] = {
+		.schema_name = CATALOG_SCHEMA_NAME,
+		.table_name = CONTINUOUS_AGGS_REFRESH_QUEUE_TABLE_NAME,
+	},
 	[_MAX_CATALOG_TABLES] = {
 		.schema_name = "invalid schema",
 		.table_name = "invalid table",
@@ -271,7 +275,13 @@ static const TableIndexDef catalog_table_index_definitions[_MAX_CATALOG_TABLES] 
 		.names = (char *[]) {
 			[CONTINUOUS_AGGS_BUCKET_FUNCTION_PKEY_IDX] = "continuous_aggs_bucket_function_pkey",
 		},
-	}
+	},
+	[CONTINUOUS_AGGS_REFRESH_QUEUE] = {
+		.length = _MAX_CONTINUOUS_AGGS_REFRESH_QUEUE_INDEX,
+		.names = (char *[]) {
+			[CONTINUOUS_AGGS_REFRESH_QUEUE_IDX] = "continuous_aggs_refresh_queue_idx",
+		},
+	},
 };
 
 static const char *catalog_table_serial_id_names[_MAX_CATALOG_TABLES] = {
@@ -290,6 +300,7 @@ static const char *catalog_table_serial_id_names[_MAX_CATALOG_TABLES] = {
 	[COMPRESSION_SETTINGS] = NULL,
 	[COMPRESSION_CHUNK_SIZE] = NULL,
 	[CHUNK_COLUMN_STATS] = CATALOG_SCHEMA_NAME ".chunk_column_stats_id_seq",
+	[CONTINUOUS_AGGS_REFRESH_QUEUE] = NULL,
 };
 
 typedef struct InternalFunctionDef

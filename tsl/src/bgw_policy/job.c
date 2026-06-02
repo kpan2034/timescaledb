@@ -470,14 +470,26 @@ policy_refresh_cagg_execute(int32 job_id, Jsonb *config)
 			(policy_data.refresh_newest_first ? processing_batch == 1 :
 												processing_batch == context.number_of_batches);
 
-		continuous_agg_refresh_internal(policy_data.cagg,
-										refresh_window,
-										context,
-										refresh_window->start_isnull,
-										refresh_window->end_isnull,
-										(context.callctx != CAGG_REFRESH_POLICY_BATCHED),
-										false, /* force */
-										apply_extend);
+		if (policy_data.cagg->data.external_refresh)
+		{
+			continuous_agg_queue_refresh_ranges(policy_data.cagg,
+												refresh_window,
+												context,
+												refresh_window->start_isnull,
+												refresh_window->end_isnull,
+												(context.callctx != CAGG_REFRESH_POLICY_BATCHED));
+		}
+		else
+		{
+			continuous_agg_refresh_internal(policy_data.cagg,
+											refresh_window,
+											context,
+											refresh_window->start_isnull,
+											refresh_window->end_isnull,
+											(context.callctx != CAGG_REFRESH_POLICY_BATCHED),
+											false, /* force */
+											apply_extend);
+		}
 		DEBUG_ERROR_INJECTION(psprintf("cagg_policy_batch_%d_after_refresh", processing_batch));
 		if (processing_batch >= policy_data.max_batches_per_execution &&
 			processing_batch < context.number_of_batches &&

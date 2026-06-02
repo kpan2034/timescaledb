@@ -44,6 +44,7 @@
 #include "ts_catalog/compression_settings.h"
 #include "ts_catalog/continuous_agg.h"
 #include "ts_catalog/continuous_aggs_jobs_refresh_ranges.h"
+#include "ts_catalog/continuous_aggs_refresh_queue.h"
 #include "ts_catalog/continuous_aggs_watermark.h"
 #include "utils.h"
 #include "with_clause/alter_table_with_clause.h"
@@ -263,6 +264,9 @@ continuous_agg_formdata_make_tuple(const FormData_continuous_agg *fd, TupleDesc 
 	values[AttrNumberGetAttrOffset(Anum_continuous_agg_materialize_only)] =
 		BoolGetDatum(fd->materialized_only);
 
+	values[AttrNumberGetAttrOffset(Anum_continuous_agg_external_refresh)] =
+		BoolGetDatum(fd->external_refresh);
+
 	return heap_form_tuple(desc, values, nulls);
 }
 
@@ -315,6 +319,8 @@ continuous_agg_formdata_fill(FormData_continuous_agg *fd, const TupleInfo *ti)
 
 	fd->materialized_only =
 		DatumGetBool(values[AttrNumberGetAttrOffset(Anum_continuous_agg_materialize_only)]);
+	fd->external_refresh =
+		DatumGetBool(values[AttrNumberGetAttrOffset(Anum_continuous_agg_external_refresh)]);
 	if (should_free)
 	{
 		heap_freetuple(tuple);
@@ -925,6 +931,9 @@ drop_continuous_agg(FormData_continuous_agg *cadata, bool drop_user_view)
 
 		/* Delete any refresh ranges registered for this CAgg */
 		ts_cagg_jobs_refresh_ranges_delete_by_mat_hypertable_id(form.mat_hypertable_id);
+
+		/* Delete any pending external refresh queue entries */
+		ts_cagg_refresh_queue_delete_by_mat_hypertable_id(form.mat_hypertable_id);
 	}
 
 	cagg_bucket_function_delete(cadata->mat_hypertable_id);

@@ -55,6 +55,7 @@ typedef enum CatalogTable
 	CONTINUOUS_AGGS_WATERMARK,
 	TELEMETRY_EVENT,
 	CHUNK_COLUMN_STATS,
+	CONTINUOUS_AGGS_REFRESH_QUEUE,
 	/* Don't forget updating catalog.c when adding new tables! */
 	_MAX_CATALOG_TABLES,
 } CatalogTable;
@@ -815,6 +816,7 @@ typedef enum Anum_continuous_agg
 	Anum_continuous_agg_direct_view_schema,
 	Anum_continuous_agg_direct_view_name,
 	Anum_continuous_agg_materialize_only,
+	Anum_continuous_agg_external_refresh,
 	_Anum_continuous_agg_max,
 } Anum_continuous_agg;
 
@@ -832,6 +834,7 @@ typedef struct FormData_continuous_agg
 	NameData direct_view_schema;
 	NameData direct_view_name;
 	bool materialized_only;
+	bool external_refresh;
 } FormData_continuous_agg;
 
 typedef FormData_continuous_agg *Form_continuous_agg;
@@ -1114,6 +1117,47 @@ typedef enum Anum_continuous_aggs_jobs_refresh_ranges_idx
 
 #define Natts_continuous_aggs_jobs_refresh_ranges_idx                                              \
 	(_Anum_continuous_aggs_jobs_refresh_ranges_idx_max - 1)
+
+/****** CONTINUOUS_AGGS_REFRESH_QUEUE definitions */
+#define CONTINUOUS_AGGS_REFRESH_QUEUE_TABLE_NAME "continuous_aggs_refresh_queue"
+
+typedef enum Anum_continuous_aggs_refresh_queue
+{
+	Anum_continuous_aggs_refresh_queue_materialization_id = 1,
+	Anum_continuous_aggs_refresh_queue_start_range,
+	Anum_continuous_aggs_refresh_queue_end_range,
+	Anum_continuous_aggs_refresh_queue_job_id,
+	Anum_continuous_aggs_refresh_queue_created_at,
+	_Anum_continuous_aggs_refresh_queue_max,
+} Anum_continuous_aggs_refresh_queue;
+
+#define Natts_continuous_aggs_refresh_queue (_Anum_continuous_aggs_refresh_queue_max - 1)
+
+typedef struct FormData_continuous_aggs_refresh_queue
+{
+	int32 materialization_id;
+	int64 start_range;
+	int64 end_range;
+	int32 job_id;
+	TimestampTz created_at;
+} FormData_continuous_aggs_refresh_queue;
+
+typedef FormData_continuous_aggs_refresh_queue *Form_continuous_aggs_refresh_queue;
+
+enum
+{
+	CONTINUOUS_AGGS_REFRESH_QUEUE_IDX = 0,
+	_MAX_CONTINUOUS_AGGS_REFRESH_QUEUE_INDEX,
+};
+
+typedef enum Anum_continuous_aggs_refresh_queue_idx
+{
+	Anum_continuous_aggs_refresh_queue_idx_materialization_id = 1,
+	_Anum_continuous_aggs_refresh_queue_idx_max,
+} Anum_continuous_aggs_refresh_queue_idx;
+
+#define Natts_continuous_aggs_refresh_queue_idx                                                     \
+	(_Anum_continuous_aggs_refresh_queue_idx_max - 1)
 
 /****** CONTINUOUS_AGGS_WATERMARK_TABLE definitions*/
 #define CONTINUOUS_AGGS_WATERMARK_TABLE_NAME "continuous_aggs_watermark"

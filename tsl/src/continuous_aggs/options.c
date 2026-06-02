@@ -28,6 +28,7 @@
 #include "with_clause/create_materialized_view_with_clause.h"
 
 static void cagg_update_materialized_only(ContinuousAgg *agg, bool materialized_only);
+static void cagg_update_external_refresh(ContinuousAgg *agg, bool external_refresh);
 static List *cagg_get_compression_params(ContinuousAgg *agg, Hypertable *mat_ht,
 										 WithClauseResult *with_clause_options);
 static void cagg_alter_compression(ContinuousAgg *agg, Hypertable *mat_ht, List *compress_defelems);
@@ -61,6 +62,51 @@ cagg_update_materialized_only(ContinuousAgg *agg, bool materialized_only)
 		doReplace[AttrNumberGetAttrOffset(Anum_continuous_agg_materialize_only)] = true;
 		values[AttrNumberGetAttrOffset(Anum_continuous_agg_materialize_only)] =
 			BoolGetDatum(materialized_only);
+
+		new_tuple = heap_modify_tuple(tuple, tupdesc, values, nulls, doReplace);
+
+		ts_catalog_update(ti->scanrel, new_tuple);
+		heap_freetuple(new_tuple);
+
+		if (should_free)
+		{
+			heap_freetuple(tuple);
+		}
+
+		break;
+	}
+	ts_scan_iterator_close(&iterator);
+}
+
+static void
+cagg_update_external_refresh(ContinuousAgg *agg, bool external_refresh)
+{
+	ScanIterator iterator =
+		ts_scan_iterator_create(CONTINUOUS_AGG, RowExclusiveLock, CurrentMemoryContext);
+	iterator.ctx.index = catalog_get_index(ts_catalog_get(), CONTINUOUS_AGG, CONTINUOUS_AGG_PKEY);
+
+	ts_scan_iterator_scan_key_init(&iterator,
+								   Anum_continuous_agg_pkey_mat_hypertable_id,
+								   BTEqualStrategyNumber,
+								   F_INT4EQ,
+								   Int32GetDatum(agg->data.mat_hypertable_id));
+
+	ts_scanner_foreach(&iterator)
+	{
+		TupleInfo *ti = ts_scan_iterator_tuple_info(&iterator);
+		bool nulls[Natts_continuous_agg];
+		Datum values[Natts_continuous_agg];
+		bool doReplace[Natts_continuous_agg] = { false };
+		bool should_free;
+		HeapTuple tuple = ts_scan_iterator_fetch_heap_tuple(&iterator, false, &should_free);
+		HeapTuple new_tuple;
+		TupleDesc tupdesc = ts_scan_iterator_tupledesc(&iterator);
+
+		heap_deform_tuple(tuple, tupdesc, values, nulls);
+
+		doReplace[AttrNumberGetAttrOffset(Anum_continuous_agg_external_refresh)] = true;
+		values[AttrNumberGetAttrOffset(Anum_continuous_agg_external_refresh)] =
+			BoolGetDatum(external_refresh);
 
 		new_tuple = heap_modify_tuple(tuple, tupdesc, values, nulls, doReplace);
 
@@ -195,6 +241,17 @@ continuous_agg_update_options(ContinuousAgg *agg, WithClauseResult *with_clause_
 		cagg_flip_realtime_view_definition(agg, mat_ht);
 		cagg_update_materialized_only(agg, materialized_only);
 		ts_cache_release(&hcache);
+	}
+
+	if (!with_clause_options[CreateMaterializedViewFlagExternalRefresh].is_default)
+	{
+		bool external_refresh =
+			DatumGetBool(with_clause_options[CreateMaterializedViewFlagExternalRefresh].parsed);
+
+		if (external_refresh != agg->data.external_refresh)
+		{
+			cagg_update_external_refresh(agg, external_refresh);
+		}
 	}
 
 	if (!with_clause_options[CreateMaterializedViewFlagChunkTimeInterval].is_default)

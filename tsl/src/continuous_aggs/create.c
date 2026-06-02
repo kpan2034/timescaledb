@@ -86,7 +86,8 @@
 static void create_cagg_catalog_entry(int32 matht_id, int32 rawht_id, const char *user_schema,
 									  const char *user_view, const char *partial_schema,
 									  const char *partial_view, bool materialized_only,
-									  const char *direct_schema, const char *direct_view,
+									  bool external_refresh, const char *direct_schema,
+									  const char *direct_view,
 									  const int32 parent_mat_hypertable_id);
 static void create_bucket_function_catalog_entry(int32 matht_id, Oid bucket_function,
 												 const char *bucket_width, const char *origin,
@@ -122,7 +123,8 @@ static void
 create_cagg_catalog_entry(int32 matht_id, int32 rawht_id, const char *user_schema,
 						  const char *user_view, const char *partial_schema,
 						  const char *partial_view, bool materialized_only,
-						  const char *direct_schema, const char *direct_view,
+						  bool external_refresh, const char *direct_schema,
+						  const char *direct_view,
 						  const int32 parent_mat_hypertable_id)
 {
 	Catalog *catalog = ts_catalog_get();
@@ -170,6 +172,8 @@ create_cagg_catalog_entry(int32 matht_id, int32 rawht_id, const char *user_schem
 		NameGetDatum(&direct_viewnm);
 	values[AttrNumberGetAttrOffset(Anum_continuous_agg_materialize_only)] =
 		BoolGetDatum(materialized_only);
+	values[AttrNumberGetAttrOffset(Anum_continuous_agg_external_refresh)] =
+		BoolGetDatum(external_refresh);
 
 	ts_catalog_database_info_become_owner(ts_catalog_database_info_get(), &sec_ctx);
 	ts_catalog_insert_values(rel, desc, values, nulls);
@@ -621,6 +625,8 @@ cagg_create(const CreateTableAsStmt *create_stmt, ViewStmt *stmt, Query *panquer
 	int32 materialize_hypertable_id;
 	bool materialized_only =
 		DatumGetBool(with_clause_options[CreateMaterializedViewFlagMaterializedOnly].parsed);
+	bool external_refresh =
+		DatumGetBool(with_clause_options[CreateMaterializedViewFlagExternalRefresh].parsed);
 
 	int64 matpartcol_interval = 0;
 	if (!with_clause_options[CreateMaterializedViewFlagChunkTimeInterval].is_default)
@@ -727,6 +733,7 @@ cagg_create(const CreateTableAsStmt *create_stmt, ViewStmt *stmt, Query *panquer
 							  part_rel->schemaname,
 							  part_rel->relname,
 							  materialized_only,
+							  external_refresh,
 							  dum_rel->schemaname,
 							  dum_rel->relname,
 							  bucket_info->parent_mat_hypertable_id);
